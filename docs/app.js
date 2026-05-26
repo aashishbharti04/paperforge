@@ -457,6 +457,118 @@
   }
 
   /* =======================================================================
+   * PDF RENDERER  (print-to-PDF: styled HTML + window.print())
+   * ===================================================================== */
+  function htmlEsc(t) {
+    return (t || "").replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  function pdfSections(sections, numbering, prefix) {
+    let html = "";
+    sections.forEach((sec, idx) => {
+      const num = prefix + (idx + 1);
+      if (sec.level === 1) {
+        const h = numbering === "roman"
+          ? romanize(num) + ".&nbsp;&nbsp;" + htmlEsc(sec.title.toUpperCase())
+          : num + "&nbsp;&nbsp;" + htmlEsc(sec.title);
+        html += '<h2 class="lvl1">' + h + "</h2>";
+      } else {
+        html += '<h3 class="lvln">' + num + "&nbsp;&nbsp;" + htmlEsc(sec.title) + "</h3>";
+      }
+      for (const p of sec.paragraphs) html += '<p class="body">' + htmlEsc(p) + "</p>";
+      if (sec.children.length) html += pdfSections(sec.children, numbering, num + ".");
+    });
+    return html;
+  }
+
+  function pdfRefs(refs) {
+    if (!refs.length) return "";
+    let h = '<h2 class="lvl1 refs-h">REFERENCES</h2><ol class="refs">';
+    refs.forEach((r) => (h += "<li>" + htmlEsc(r.raw) + "</li>"));
+    return h + "</ol>";
+  }
+
+  function renderPdfDoc(paper, publisher, docTitle) {
+    const numbering = publisher === "ieee" ? "roman" : "arabic";
+    const authors = paper.authors.map((a) => a.name).join(",&nbsp;&nbsp;");
+    const affils = [...new Set(paper.authors.map((a) => a.affiliation).filter(Boolean))];
+
+    let css, header, content;
+    if (publisher === "ieee") {
+      css = `
+        @page { size: letter; margin: 0.75in 0.6in; }
+        body { font-family:"Times New Roman",Times,serif; font-size:10pt; line-height:1.25; margin:0; }
+        .header { text-align:center; margin-bottom:12pt; }
+        .title { font-size:20pt; font-weight:bold; margin:0 0 8pt; }
+        .authors { font-size:11pt; margin:0 0 2pt; }
+        .affil { font-size:10pt; font-style:italic; margin:0 0 2pt; }
+        .content { column-count:2; column-gap:0.25in; text-align:justify; }
+        .abstract, .keywords { font-style:italic; margin:0 0 6pt; }
+        .abstract b, .keywords b { font-weight:bold; font-style:italic; }
+        h2.lvl1 { font-size:10pt; font-weight:bold; text-align:center; font-variant:small-caps; margin:8pt 0 4pt; break-after:avoid; }
+        h3.lvln { font-size:10pt; font-style:italic; margin:6pt 0 3pt; break-after:avoid; }
+        p.body { margin:0 0 6pt; text-indent:0.2in; }
+        ol.refs { font-size:9pt; margin:0; padding-left:1.4em; } ol.refs li { margin:0 0 3pt; }
+        h2.refs-h { font-variant:normal; }`;
+    } else if (publisher === "springer") {
+      css = `
+        @page { size: A4; margin: 1in 1.2in; }
+        body { font-family:"Times New Roman",Times,serif; font-size:10pt; line-height:1.3; margin:0; }
+        .header { margin-bottom:10pt; }
+        .title { font-size:16pt; font-weight:bold; margin:0 0 8pt; }
+        .authors { font-size:11pt; margin:0 0 2pt; }
+        .affil { font-size:9pt; font-style:italic; margin:0 0 8pt; }
+        .content { text-align:justify; }
+        .abstract { font-size:9pt; margin:0 0 4pt 0.4in; padding-right:0.4in; }
+        .keywords { font-size:9pt; margin:0 0 10pt 0.4in; }
+        h2.lvl1 { font-size:11pt; font-weight:bold; margin:10pt 0 4pt; break-after:avoid; }
+        h3.lvln { font-size:10pt; font-weight:bold; font-style:italic; margin:6pt 0 3pt; break-after:avoid; }
+        p.body { margin:0 0 6pt; text-indent:0.2in; }
+        ol.refs { font-size:9pt; margin:0; padding-left:1.4em; } ol.refs li { margin:0 0 3pt; }`;
+    } else {
+      css = `
+        @page { size: A4; margin: 1in; }
+        body { font-family:"Times New Roman",Times,serif; font-size:12pt; line-height:1.4; margin:0; }
+        .header { margin-bottom:12pt; }
+        .title { font-size:18pt; font-weight:bold; margin:0 0 10pt; }
+        .authors { font-size:12pt; margin:0; }
+        .affil { font-size:10pt; font-style:italic; margin:0 0 2pt; }
+        .abstract { margin:6pt 0; } .abstract b { font-weight:bold; }
+        .keywords { margin:0 0 10pt; }
+        .content { text-align:justify; }
+        h2.lvl1 { font-size:13pt; font-weight:bold; margin:10pt 0 4pt; break-after:avoid; }
+        h3.lvln { font-size:12pt; font-weight:bold; margin:6pt 0 3pt; break-after:avoid; }
+        p.body { margin:0 0 6pt; }
+        ol.refs { font-size:11pt; margin:0; padding-left:1.4em; } ol.refs li { margin:0 0 4pt; }`;
+    }
+
+    header = '<div class="header"><p class="title">' + htmlEsc(paper.title) + "</p>";
+    if (authors) header += '<p class="authors">' + authors + "</p>";
+    affils.forEach((af) => (header += '<p class="affil">' + htmlEsc(af) + "</p>"));
+    header += "</div>";
+
+    let body = "";
+    if (paper.abstract) {
+      const lead = publisher === "ieee" ? "Abstract&mdash;" : (publisher === "springer" ? "Abstract. " : "Abstract<br>");
+      body += '<p class="abstract"><b>' + lead + "</b>" + htmlEsc(paper.abstract) + "</p>";
+    }
+    if (paper.keywords.length) {
+      const lead = publisher === "ieee" ? "Index Terms&mdash;" : "Keywords: ";
+      body += '<p class="keywords"><b>' + lead + "</b>" + htmlEsc(paper.keywords.join(", ")) + "</p>";
+    }
+    body += pdfSections(paper.sections, numbering, "");
+    body += pdfRefs(paper.references);
+    content = '<div class="content">' + body + "</div>";
+
+    return "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" +
+      htmlEsc(docTitle) + "</title><style>" + css + "</style></head><body>" +
+      header + content +
+      "<script>window.onload=function(){setTimeout(function(){window.print();},150);};<\/script>" +
+      "</body></html>";
+  }
+
+  /* =======================================================================
    * DOCX RENDERER  (docx.js)
    * ===================================================================== */
   function romanize(num) {
@@ -637,6 +749,20 @@
       const blob = await buildDocx(paper, publisher());
       download(blob, paperStem(paper) + "_" + publisher() + ".docx");
       convStatus("Word file ready. " + summary(paper), "ok");
+    } catch (e) { convStatus("Error: " + e.message, "warn"); console.error(e); }
+  });
+
+  $("btn-pdf").addEventListener("click", async () => {
+    try {
+      convStatus("Parsing & preparing PDF…");
+      const paper = await getConvPaper();
+      if (!paper) { convStatus("Add a file or paste some text first.", "warn"); return; }
+      const name = paperStem(paper) + "_" + publisher();
+      const html = renderPdfDoc(paper, publisher(), name);
+      const w = window.open("", "_blank");
+      if (!w) { convStatus("Pop-up blocked — allow pop-ups for this site to export PDF.", "warn"); return; }
+      w.document.open(); w.document.write(html); w.document.close();
+      convStatus('PDF ready — choose "Save as PDF" in the print dialog. ' + summary(paper), "ok");
     } catch (e) { convStatus("Error: " + e.message, "warn"); console.error(e); }
   });
 

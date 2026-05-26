@@ -23,7 +23,7 @@
   <div class="card">
     <h2>1. Input</h2>
     <p class="hint">Upload a <code>.docx</code>, <code>.txt</code>, or <code>.md</code> file, or paste your paper below.
-      <br>For PDF input or compiled-PDF output, use the desktop version (see footer).</p>
+      <br>Reading <em>existing</em> PDF files as input needs the desktop version (see footer).</p>
     <input type="file" id="conv-file" accept=".docx,.txt,.md,.markdown,.tex" />
     <textarea id="conv-text" rows="10" placeholder="…or paste your paper text here.
 First line = title. Then authors, then 'Abstract', 'Keywords:', numbered sections, and 'References'."></textarea>
@@ -42,9 +42,11 @@ First line = title. Then authors, then 'Abstract', 'Keywords:', numbered section
     <h2>3. Convert &amp; download</h2>
     <div class="row">
       <button id="btn-docx" class="primary">Download Word (.docx)</button>
+      <button id="btn-pdf" class="primary">Download PDF</button>
       <button id="btn-tex" class="primary">Download LaTeX (.tex)</button>
     </div>
-    <p class="hint">Tip: open the <code>.tex</code> on <a href="https://overleaf.com" target="_blank" rel="noopener">Overleaf</a> to get a publisher-perfect PDF for free.</p>
+    <p class="hint">PDF opens a print view — choose <strong>“Save as PDF”</strong> as the destination. Allow pop-ups if nothing opens.
+      <br>Tip: for a publisher-perfect PDF, open the <code>.tex</code> on <a href="https://overleaf.com" target="_blank" rel="noopener">Overleaf</a> (free).</p>
     <div id="conv-status" class="status"></div>
   </div>
 </section>
