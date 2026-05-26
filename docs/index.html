@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PaperForge — Paper Formatter & Text Humanizer</title>
+<meta name="description" content="Convert papers to IEEE, Springer, and Elsevier format, and rewrite AI-sounding text into plainer language. Runs entirely in your browser." />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <h1>PaperForge</h1>
+  <p class="tagline">Format papers for <strong>IEEE</strong>, <strong>Springer</strong> &amp; <strong>Elsevier</strong> — and rewrite AI-sounding text into plain language. Everything runs in your browser; nothing is uploaded.</p>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="convert">Format Converter</button>
+  <button class="tab" data-tab="humanize">AI → Human</button>
+</nav>
+
+<!-- ================= CONVERTER ================= -->
+<section id="convert" class="panel active">
+  <div class="card">
+    <h2>1. Input</h2>
+    <p class="hint">Upload a <code>.docx</code>, <code>.txt</code>, or <code>.md</code> file, or paste your paper below.
+      <br>For PDF input or compiled-PDF output, use the desktop version (see footer).</p>
+    <input type="file" id="conv-file" accept=".docx,.txt,.md,.markdown,.tex" />
+    <textarea id="conv-text" rows="10" placeholder="…or paste your paper text here.
+First line = title. Then authors, then 'Abstract', 'Keywords:', numbered sections, and 'References'."></textarea>
+  </div>
+
+  <div class="card">
+    <h2>2. Publisher</h2>
+    <div class="row">
+      <label><input type="radio" name="pub" value="ieee" checked /> IEEE</label>
+      <label><input type="radio" name="pub" value="springer" /> Springer (LNCS)</label>
+      <label><input type="radio" name="pub" value="elsevier" /> Elsevier</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. Convert &amp; download</h2>
+    <div class="row">
+      <button id="btn-docx" class="primary">Download Word (.docx)</button>
+      <button id="btn-tex" class="primary">Download LaTeX (.tex)</button>
+    </div>
+    <p class="hint">Tip: open the <code>.tex</code> on <a href="https://overleaf.com" target="_blank" rel="noopener">Overleaf</a> to get a publisher-perfect PDF for free.</p>
+    <div id="conv-status" class="status"></div>
+  </div>
+</section>
+
+<!-- ================= HUMANIZER ================= -->
+<section id="humanize" class="panel">
+  <div class="card">
+    <h2>1. Text</h2>
+    <p class="hint">Paste text, or load a file and pick a paragraph.</p>
+    <input type="file" id="hum-file" accept=".docx,.txt,.md,.markdown,.tex" />
+    <select id="hum-para" class="hidden"></select>
+    <textarea id="hum-input" rows="8" placeholder="Paste the text you want to rewrite…"></textarea>
+  </div>
+
+  <div class="card">
+    <h2>2. Strength &amp; options</h2>
+    <div class="row">
+      <label><input type="radio" name="level" value="light" /> Light</label>
+      <label><input type="radio" name="level" value="medium" checked /> Medium</label>
+      <label><input type="radio" name="level" value="strong" /> Strong</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="opt-vocab" checked /> Simplify words</label>
+      <label><input type="checkbox" id="opt-filler" checked /> Remove filler</label>
+      <label><input type="checkbox" id="opt-contractions" /> Contractions</label>
+      <label><input type="checkbox" id="opt-split" checked /> Split long sentences</label>
+    </div>
+    <button id="btn-humanize" class="primary">Humanize</button>
+  </div>
+
+  <div class="card">
+    <h2>3. Result <span id="hum-count" class="muted"></span></h2>
+    <textarea id="hum-output" rows="8" placeholder="Rewritten text appears here. Always review before using."></textarea>
+    <div class="row">
+      <button id="btn-copy">Copy</button>
+      <button id="btn-save-txt">Download .txt</button>
+    </div>
+    <p class="hint">This is a writing-improvement aid for your own drafts — not an AI-detector bypass.</p>
+  </div>
+</section>
+
+<footer>
+  <p>Runs locally in your browser — your files never leave your device.
+     Full version (PDF in/out, command line) on
+     <a href="https://github.com/aashishbharti04/paperforge" target="_blank" rel="noopener">GitHub</a>.</p>
+</footer>
+
+<!-- third-party libraries (UMD globals) -->
+<script src="https://unpkg.com/mammoth@1.9.0/mammoth.browser.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
