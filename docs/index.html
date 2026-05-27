@@ -5,17 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PaperForge — Paper Formatter & Text Humanizer</title>
 <meta name="description" content="Convert papers to IEEE, Springer, and Elsevier format, and rewrite AI-sounding text into plainer language. Runs entirely in your browser." />
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
 <header>
-  <h1>PaperForge</h1>
+  <div class="brand">
+    <span class="logo">PF</span>
+    <div>
+      <h1>PaperForge</h1>
+      <p class="subtitle">Academic paper formatter &amp; text humanizer</p>
+    </div>
+  </div>
   <p class="tagline">Format papers for <strong>IEEE</strong>, <strong>Springer</strong> &amp; <strong>Elsevier</strong> — and rewrite AI-sounding text into plain language. Everything runs in your browser; nothing is uploaded.</p>
+  <ul class="chips">
+    <li>100% in-browser</li>
+    <li>No sign-up</li>
+    <li>Word · PDF · LaTeX</li>
+    <li>Privacy-first</li>
+    <li>Free &amp; open source</li>
+  </ul>
 </header>
 
 <nav class="tabs">
   <button class="tab active" data-tab="convert">Format Converter</button>
   <button class="tab" data-tab="humanize">AI → Human</button>
+  <button class="tab" data-tab="howto">How to Use</button>
+  <button class="tab" data-tab="about">About</button>
 </nav>
 
 <!-- ================= CONVERTER ================= -->
@@ -88,6 +103,66 @@ First line = title. Then authors, then 'Abstract', 'Keywords:', numbered section
   </div>
 </section>
 
+<!-- ================= HOW TO USE ================= -->
+<section id="howto" class="panel">
+  <div class="card">
+    <h2>Format a paper in 3 steps</h2>
+    <ol class="steps">
+      <li><strong>Add your paper.</strong> Upload a <code>.docx</code>, <code>.txt</code>, <code>.md</code>, or <code>.tex</code> file, or paste the text. The first line is read as the <em>title</em>, followed by authors, then <code>Abstract</code>, <code>Keywords:</code>, numbered sections, and <code>References</code>. Leave a blank line between each block for best results.</li>
+      <li><strong>Pick a publisher.</strong> Choose <strong>IEEE</strong>, <strong>Springer (LNCS)</strong>, or <strong>Elsevier</strong>. The layout, fonts, headings, and reference style match that publisher's template.</li>
+      <li><strong>Download.</strong> Get a ready-to-edit <strong>Word (.docx)</strong>, a print-ready <strong>PDF</strong>, or a <strong>LaTeX (.tex)</strong> source you can compile on Overleaf.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Rewrite AI-sounding text</h2>
+    <ol class="steps">
+      <li><strong>Paste or load text.</strong> On the <em>AI → Human</em> tab, paste your draft, or load a file and pick a single paragraph.</li>
+      <li><strong>Choose a strength.</strong> <em>Light</em> simplifies vocabulary only; <em>Medium</em> also removes filler and splits long sentences; <em>Strong</em> adds contractions for a casual tone. Toggle individual options if you want fine control.</li>
+      <li><strong>Review &amp; reuse.</strong> Click <em>Humanize</em>, read the result, then copy it or download a <code>.txt</code>. Always proofread before submitting.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Tips &amp; notes</h2>
+    <ul class="ticks">
+      <li>Everything runs locally in your browser — your files are never uploaded.</li>
+      <li>For a publisher-perfect PDF, download the <code>.tex</code> and compile it free on <a href="https://overleaf.com" target="_blank" rel="noopener">Overleaf</a>.</li>
+      <li>The <strong>Download PDF</strong> button opens a print view — choose “Save as PDF” as the destination and allow pop-ups.</li>
+      <li>Reading <em>existing</em> PDF files as input needs the full desktop version on <a href="https://github.com/aashishbharti04/paperforge" target="_blank" rel="noopener">GitHub</a>.</li>
+      <li>The humanizer is a writing aid for your own drafts — not a tool to bypass AI detectors.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= ABOUT ================= -->
+<section id="about" class="panel">
+  <div class="card about-tool">
+    <h2>About PaperForge</h2>
+    <p>PaperForge is a free, open-source tool that turns plain drafts into properly formatted academic papers for the major publishers, and helps rewrite stiff, AI-sounding prose into clearer language. It runs entirely in your browser — there is no server, no account, and nothing you load ever leaves your device.</p>
+  </div>
+
+  <div class="card creator">
+    <div class="avatar">AB</div>
+    <div class="creator-body">
+      <h2>About the creator</h2>
+      <p class="creator-name">Aashish Bharti</p>
+      <p class="creator-role">Developer &amp; creator of PaperForge · builds academic-publishing tools and shares coding content as <strong>CodeWithAsur</strong>.</p>
+      <nav class="social">
+        <a href="https://github.com/aashishbharti04" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://www.youtube.com/@CodeWithAsur" target="_blank" rel="noopener">YouTube</a>
+        <a href="https://www.instagram.com/asurwave1012?igsh=ZDBlY2NtczJ5cmMw" target="_blank" rel="noopener">Instagram</a>
+        <a href="mailto:aashish@marketdoctorsonline.com">Email</a>
+      </nav>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Support &amp; feedback</h2>
+    <p>Found a bug or have an idea? Open an issue on <a href="https://github.com/aashishbharti04/paperforge" target="_blank" rel="noopener">GitHub</a> or reach out by <a href="mailto:aashish@marketdoctorsonline.com">email</a>. If PaperForge helps your work, a star on the repo and a subscribe on <a href="https://www.youtube.com/@CodeWithAsur" target="_blank" rel="noopener">YouTube</a> are much appreciated.</p>
+  </div>
+</section>
+
 <footer>
   <p>Runs locally in your browser — your files never leave your device.
      Full version (PDF in/out, command line) on
@@ -104,6 +179,6 @@ First line = title. Then authors, then 'Abstract', 'Keywords:', numbered section
 <!-- third-party libraries (UMD globals) -->
 <script src="https://unpkg.com/mammoth@1.9.0/mammoth.browser.min.js"></script>
 <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
