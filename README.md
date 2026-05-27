@@ -7,9 +7,21 @@ format — as an editable **Word `.docx`** and/or **LaTeX `.tex` → PDF**.
 Useful for PhD students and researchers submitting the same manuscript to
 different publishers, each of which mandates its own layout.
 
-It also includes an **AI → Human** text rewriter that turns stiff, robotic
-prose into plainer, more natural language — on pasted text, a single
-paragraph, or a whole file. (See [Humanize text](#humanize-text-ai--human).)
+It also turns a long **thesis or dissertation into a journal-article skeleton**
+(see [Thesis → Article](#thesis--article)) and includes an **AI → Human** text
+rewriter that turns stiff, robotic prose into plainer, more natural language —
+on pasted text, a single paragraph, or a whole file.
+(See [Humanize text](#humanize-text-ai--human).)
+
+### Try it in your browser
+
+A full version runs **entirely client-side** — no install, no upload, nothing
+leaves your device:
+
+**→ https://aashishbharti04.github.io/paperforge/**
+
+The web app has four tools as tabs: **Format Converter**, **Thesis → Article**,
+**Paper Check**, and **AI → Human**, plus a light/dark theme toggle.
 
 ---
 
@@ -102,6 +114,53 @@ print(result.warnings)   # things to double-check
 ```
 
 ---
+
+## Thesis → Article
+
+A thesis is long and chapter-structured; a journal or conference article is
+short and section-structured. The **Thesis → Article** tool bridges the two:
+
+1. **Reads** your full thesis/dissertation (`.docx`, `.txt`, `.md`, `.tex`) and
+   detects its chapters (`Introduction`, `Literature Review`, `Methodology`,
+   `Results`, `Conclusion`, …).
+2. **Maps** those chapters onto a target article shape — a built-in template
+   (**journal**, **conference**, or **review**) *or* the structure of a sample
+   article you upload, so the output mimics a specific venue.
+3. **Condenses** each section to article length. Condensing is **extractive**
+   (it keeps the leading sentences of the leading paragraphs — it shortens, it
+   does not invent or rewrite), so the result stays faithful to your words.
+   Three strengths: **light**, **medium**, **strong**.
+4. **Generates an abstract** from the introduction and conclusion when the
+   thesis has none, and can optionally pass the result through the
+   *AI → Human* rewriter.
+
+Chapters that don't match a standard section are kept as extra sections rather
+than dropped, and the tool lists what to review. The finished article can be
+downloaded as **Word**, **PDF**, or **LaTeX** in any of the three publisher
+styles. As always: **proofread before submitting.**
+
+Currently available in the [web app](#try-it-in-your-browser).
+
+## Paper Check
+
+A read-only reviewer that scans your paper **before you submit** and returns a
+readiness score (0–100) plus a grouped checklist — it never edits your file, so
+*you* decide what to fix. Pick a target publisher (IEEE, Springer, Elsevier, or
+generic) and the thresholds adapt. It flags, among other things:
+
+- **Structure** — missing title/authors/affiliation, too few sections, missing
+  Introduction or Conclusion, empty sections.
+- **Abstract & keywords** — present, and within the publisher's expected length
+  and count.
+- **References** — present, enough of them, and actually cited (`[n]`) in the body.
+- **Readability** — overly long sentences, double spaces, spacing before
+  punctuation.
+- **AI-sounding language** — inflated phrases and words (e.g. *utilize*,
+  *a plethora of*, *it is important to note that*) that read as AI-generated,
+  with a one-click path to the *AI → Human* rewriter.
+
+Issues are grouped into **must fix**, **should review**, and **suggestions**.
+Available in the [web app](#try-it-in-your-browser).
 
 ## Humanize text (AI → Human)
 

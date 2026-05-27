@@ -341,9 +341,19 @@
       const md = markdownLevel(chunk.trim());
       if (md && !chunk.trim().includes("\n")) { blocks.push({ text: md.title, level: md.level }); continue; }
       const lines = chunk.split("\n");
-      const head = markdownLevel(lines[0].trim());
+      const firstLine = lines[0].trim();
+      const head = markdownLevel(firstLine);
+      // A chunk often holds a heading immediately followed (next line) by its
+      // body — common when pasting a thesis. Split the leading heading line off
+      // so chapters are detected instead of being glued into one paragraph.
+      const headingLevel = head ? head.level
+        : (lines.length > 1 ? looksLikeHeading(firstLine) : null);
       if (head) {
         blocks.push({ text: head.title, level: head.level });
+        const body = lines.slice(1).join("\n").trim();
+        if (body) blocks.push({ text: body.replace(/\n/g, " ").trim(), level: 0 });
+      } else if (headingLevel) {
+        blocks.push({ text: firstLine, level: headingLevel });
         const body = lines.slice(1).join("\n").trim();
         if (body) blocks.push({ text: body.replace(/\n/g, " ").trim(), level: 0 });
       } else blocks.push({ text: chunk.replace(/\n/g, " ").trim(), level: 0 });
@@ -689,6 +699,358 @@
   }
 
   /* =======================================================================
+   * THESIS -> ARTICLE
+   * Maps a long thesis/dissertation into a short article skeleton and
+   * condenses each section (extractive: keep the leading sentences of the
+   * leading paragraphs). Pure client-side; no summarization model required.
+   * An optional LLM hook mirrors the Python humanizer's set_llm_backend.
+   * ===================================================================== */
+
+  // Built-in target shapes. Order matters — it's the article's section order.
+  const ARTICLE_TEMPLATES = {
+    journal: {
+      name: "Journal article",
+      desc: "Standard research-paper shape for most journals.",
+      sections: ["Introduction", "Related Work", "Methodology", "Results and Discussion", "Conclusion"],
+    },
+    conference: {
+      name: "Conference paper",
+      desc: "Compact, results-focused short paper.",
+      sections: ["Introduction", "Related Work", "Method", "Results", "Conclusion"],
+    },
+    review: {
+      name: "Review article",
+      desc: "Survey / literature-review shape.",
+      sections: ["Introduction", "Background", "Thematic Review", "Discussion", "Conclusion and Future Work"],
+    },
+  };
+
+  // Canonical buckets a thesis chapter (or a target section title) maps to.
+  // Leading \b + stem (no trailing \b) so inflections match: "introduc" hits
+  // "Introduction"/"introductory", "result" hits "Results", etc.
+  const SECTION_SYNONYMS = [
+    { canon: "Introduction", re: /\b(introduc|overview|motivation|problem statement|aim|objective|scope)/i },
+    { canon: "Related Work", re: /\b(literature|related work|background|prior work|state of the art|survey|review of|theoretical)/i },
+    { canon: "Methodology", re: /\b(method|approach|material|experimental|design|implementation|propos|system|model|framework|algorithm|architecture|procedure)/i },
+    { canon: "Results", re: /\b(result|finding|evaluation|experiment|performance|analysis|observation)/i },
+    { canon: "Discussion", re: /\b(discussion|interpretation|implication|limitation|threat to validity)/i },
+    { canon: "Conclusion", re: /\b(conclusion|concluding|summary|future work|future direction|recommendation|closing)/i },
+  ];
+
+  // How much survives per section, by strength.
+  const CONDENSE = {
+    light:  { sentencesPerPara: 3, maxParas: 6 },
+    medium: { sentencesPerPara: 2, maxParas: 4 },
+    strong: { sentencesPerPara: 1, maxParas: 2 },
+  };
+
+  let THESIS_LLM = null;            // optional async (text, level) => string
+  function setThesisLLM(fn) { THESIS_LLM = fn; }
+
+  function splitSentences(text) {
+    return (text || "").split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  function classifyTitle(title) {
+    for (const { canon, re } of SECTION_SYNONYMS) if (re.test(title || "")) return canon;
+    return null;
+  }
+
+  // Depth-first collect every paragraph under a chapter (section + descendants).
+  function collectParagraphs(section) {
+    const out = section.paragraphs.slice();
+    for (const child of section.children) {
+      for (const p of collectParagraphs(child)) out.push(p);
+    }
+    return out;
+  }
+
+  // Extractive condense: keep the leading sentences of the leading paragraphs.
+  function condenseParagraphs(paragraphs, level) {
+    const cfg = CONDENSE[level] || CONDENSE.medium;
+    const out = [];
+    for (const p of paragraphs.slice(0, cfg.maxParas)) {
+      const kept = splitSentences(p).slice(0, cfg.sentencesPerPara).join(" ");
+      if (kept) out.push(kept);
+    }
+    return out;
+  }
+
+  function wordCount(paragraphs) {
+    return paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
+  }
+
+  // Build an abstract from the intro + conclusion topic sentences when missing.
+  function synthAbstract(chapters, level) {
+    const pick = (canon) => {
+      const ch = chapters.find((c) => classifyTitle(c.title) === canon);
+      if (!ch) return [];
+      return ch.paragraphs.flatMap((p) => splitSentences(p).slice(0, 1));
+    };
+    const lead = [...pick("Introduction"), ...pick("Conclusion")];
+    const limit = level === "strong" ? 3 : level === "light" ? 6 : 4;
+    return lead.slice(0, limit).join(" ");
+  }
+
+  /**
+   * Convert a parsed thesis Paper into a condensed article Paper.
+   * opts = { template: "journal"|"conference"|"review",
+   *          customSections: [titles] | null,   // from an uploaded sample
+   *          level: "light"|"medium"|"strong",
+   *          makeAbstract: bool }
+   */
+  function thesisToArticle(paper, opts) {
+    opts = opts || {};
+    const level = opts.level || "medium";
+    const article = {
+      title: paper.title || "Untitled",
+      authors: (paper.authors || []).map((a) => ({ name: a.name, affiliation: a.affiliation, email: a.email })),
+      abstract: paper.abstract || "",
+      keywords: (paper.keywords || []).slice(),
+      sections: [],
+      references: (paper.references || []).slice(),
+      warnings: [],
+    };
+
+    // Flatten chapters and tag each with a canonical bucket.
+    const chapters = (paper.sections || []).map((s) => ({
+      title: s.title,
+      canon: classifyTitle(s.title),
+      paragraphs: collectParagraphs(s),
+    }));
+
+    if (!chapters.length) {
+      article.warnings.push("No chapters/sections were detected in the thesis.");
+      return article;
+    }
+
+    // Target section list: an uploaded sample's structure, or a template.
+    const targetTitles = (opts.customSections && opts.customSections.length)
+      ? opts.customSections
+      : (ARTICLE_TEMPLATES[opts.template] || ARTICLE_TEMPLATES.journal).sections;
+
+    const usedCanons = new Set();
+    const usedChapters = new Set();
+
+    for (const targetTitle of targetTitles) {
+      const canon = classifyTitle(targetTitle);
+      // Gather all thesis chapters whose bucket matches this target section.
+      let paras = [];
+      chapters.forEach((ch, idx) => {
+        if (canon && ch.canon === canon && !usedCanons.has(canon)) {
+          paras = paras.concat(ch.paragraphs);
+          usedChapters.add(idx);
+        }
+      });
+      if (canon) usedCanons.add(canon);
+      const condensed = condenseParagraphs(paras, level);
+      article.sections.push({
+        title: targetTitle,
+        level: 1,
+        paragraphs: condensed.length ? condensed : [],
+        children: [],
+      });
+    }
+
+    // Any thesis chapter that mapped nowhere becomes its own extra section,
+    // inserted just before the final (conclusion-like) section so no content
+    // is silently dropped.
+    const orphans = chapters.filter((_, idx) => !usedChapters.has(idx));
+    if (orphans.length) {
+      const extras = orphans.map((ch) => ({
+        title: ch.title,
+        level: 1,
+        paragraphs: condenseParagraphs(ch.paragraphs, level),
+        children: [],
+      })).filter((s) => s.paragraphs.length);
+      if (extras.length) {
+        const insertAt = Math.max(0, article.sections.length - 1);
+        article.sections.splice(insertAt, 0, ...extras);
+        article.warnings.push(
+          extras.length + " chapter(s) did not match a standard section and were kept as extra sections — review their placement.");
+      }
+    }
+
+    // Drop target sections that ended up empty (no matching thesis content).
+    const empties = article.sections.filter((s) => !s.paragraphs.length).map((s) => s.title);
+    article.sections = article.sections.filter((s) => s.paragraphs.length);
+    if (empties.length) {
+      article.warnings.push("No content found for: " + empties.join(", ") + ".");
+    }
+
+    if (!article.abstract && opts.makeAbstract) {
+      const a = synthAbstract(chapters, level);
+      if (a) { article.abstract = a; article.warnings.push("Abstract was auto-generated from the introduction and conclusion — review it."); }
+    }
+
+    if (!article.references.length) article.warnings.push("No references were detected.");
+    article.warnings.push("Condensing is extractive (it shortens, it does not rewrite). Proofread before submitting.");
+    return article;
+  }
+
+  // Read a sample article and return just its top-level section titles, in order.
+  async function readFormatStructure(file) {
+    const paper = await readFileToPaper(file);
+    const titles = (paper.sections || []).map((s) => s.title).filter(Boolean);
+    return titles;
+  }
+
+  /* =======================================================================
+   * PAPER CHECK
+   * A rule-based reviewer: scans a parsed Paper for structure, formatting,
+   * and language problems and returns a checklist. Read-only — it never
+   * edits the paper. The language check reuses the humanizer's phrase/word
+   * lists to flag "AI-sounding" wording.
+   * ===================================================================== */
+  const CHECK_RULES = {
+    ieee:     { abstract: [150, 250], keywords: [3, 6], minRefs: 8 },
+    springer: { abstract: [150, 250], keywords: [3, 6], minRefs: 6 },
+    elsevier: { abstract: [120, 300], keywords: [3, 7], minRefs: 6 },
+    generic:  { abstract: [100, 300], keywords: [3, 8], minRefs: 5 },
+  };
+
+  function walkSections(sections, cb) {
+    for (const s of sections) { cb(s); walkSections(s.children, cb); }
+  }
+
+  function allBodyParagraphs(paper) {
+    const out = [];
+    if (paper.abstract) out.push(paper.abstract);
+    walkSections(paper.sections, (s) => s.paragraphs.forEach((p) => out.push(p)));
+    return out;
+  }
+
+  function wordsIn(text) { return (text || "").split(/\s+/).filter(Boolean).length; }
+
+  // Flag AI-sounding phrases/words by reusing the humanizer dictionaries.
+  function detectAILanguage(text) {
+    const found = [];
+    let total = 0;
+    const scan = (mapping, isPhrase) => {
+      for (const [term] of mapping) {
+        const pat = isPhrase
+          ? escapeRegex(term).replace(/ /g, "\\s+")
+          : "\\b" + escapeRegex(term) + "\\b";
+        const m = text.match(new RegExp(pat, "gi"));
+        if (m && m.length) { found.push({ term: term, count: m.length }); total += m.length; }
+      }
+    };
+    scan(PHRASE_MAP, true);
+    scan(WORD_MAP, false);
+    found.sort((a, b) => b.count - a.count);
+    return { items: found, total: total };
+  }
+
+  function checkPaper(paper, publisher, opts) {
+    opts = opts || {};
+    const rules = CHECK_RULES[publisher] || CHECK_RULES.generic;
+    const issues = [];
+    const add = (level, title, detail, extra) =>
+      issues.push(Object.assign({ level: level, title: title, detail: detail }, extra || {}));
+
+    // --- title / authors ---
+    if (!paper.title || !paper.title.trim()) {
+      add("error", "No title detected", "The first line is read as the title — add one.");
+    } else {
+      if (wordsIn(paper.title) > 20)
+        add("warn", "Title looks long", "It's " + wordsIn(paper.title) + " words. Most paper titles are under 20.");
+      if (paper.title === paper.title.toUpperCase() && /[A-Z]/.test(paper.title))
+        add("tip", "Title is all caps", "Use title case; the renderer applies the publisher's capitalization.");
+    }
+    if (!paper.authors || !paper.authors.length) {
+      add("warn", "No authors detected", "Add author names on the line(s) after the title.");
+    } else if (!paper.authors.some((a) => a.affiliation)) {
+      add("tip", "No affiliation found", "Add an affiliation so the byline renders fully.");
+    }
+
+    // --- abstract ---
+    const [aMin, aMax] = rules.abstract;
+    if (!paper.abstract || !paper.abstract.trim()) {
+      add("error", "No abstract", "Add an 'Abstract' section. " + publisher.toUpperCase() +
+        " expects roughly " + aMin + "–" + aMax + " words.");
+    } else {
+      const w = wordsIn(paper.abstract);
+      if (w < aMin) add("warn", "Abstract may be too short", "It's " + w + " words; aim for " + aMin + "–" + aMax + ".");
+      else if (w > aMax) add("warn", "Abstract may be too long", "It's " + w + " words; aim for " + aMin + "–" + aMax + ".");
+    }
+
+    // --- keywords ---
+    const [kMin, kMax] = rules.keywords;
+    if (!paper.keywords || !paper.keywords.length) {
+      add("warn", "No keywords", "Add a 'Keywords:' line; " + publisher.toUpperCase() + " expects " + kMin + "–" + kMax + ".");
+    } else if (paper.keywords.length < kMin) {
+      add("tip", "Few keywords", "Only " + paper.keywords.length + "; " + kMin + "–" + kMax + " is typical.");
+    } else if (paper.keywords.length > kMax) {
+      add("tip", "Many keywords", paper.keywords.length + " keywords; " + kMin + "–" + kMax + " is typical.");
+    }
+
+    // --- structure ---
+    const topTitles = paper.sections.map((s) => (s.title || "").toLowerCase());
+    if (!paper.sections.length) {
+      add("error", "No sections detected", "Use clear headings (e.g. 'Introduction', '2. Methods').");
+    } else {
+      if (paper.sections.length < 3)
+        add("warn", "Very few sections", "Only " + paper.sections.length + " section(s) detected — check your headings.");
+      if (!topTitles.some((t) => /introduc/.test(t)))
+        add("tip", "No Introduction section", "Most papers open with an Introduction.");
+      if (!topTitles.some((t) => /conclusion|concluding|summary/.test(t)))
+        add("tip", "No Conclusion section", "Consider adding a Conclusion.");
+      // empty sections
+      let empties = 0;
+      walkSections(paper.sections, (s) => { if (!s.paragraphs.length && !s.children.length) empties++; });
+      if (empties) add("warn", "Empty section(s)", empties + " heading(s) have no text under them.");
+    }
+
+    // --- references & citations ---
+    const body = allBodyParagraphs(paper).join("\n");
+    if (!paper.references || !paper.references.length) {
+      add("warn", "No references", "Add a 'References' section with your sources.");
+    } else {
+      if (paper.references.length < rules.minRefs)
+        add("tip", "Few references", paper.references.length + " found; " + rules.minRefs + "+ is typical for " + publisher.toUpperCase() + ".");
+      const cited = (body.match(/\[\d+\]/g) || []).length;
+      if (cited === 0)
+        add("warn", "References never cited in text", "Found " + paper.references.length +
+          " references but no [n] citations in the body — make sure each is cited.");
+    }
+
+    // --- formatting / readability ---
+    const paras = allBodyParagraphs(paper);
+    let longSentences = 0;
+    paras.forEach((p) => splitSentences(p).forEach((s) => { if (wordsIn(s) > 40) longSentences++; }));
+    if (longSentences) add("tip", longSentences + " very long sentence(s)", "Sentences over 40 words are hard to read — consider splitting them (try the AI → Human tab).");
+    if (/\s{2,}/.test(body)) add("tip", "Double spaces found", "There are repeated spaces in the body text.");
+    if (/\s[,.;:]/.test(body)) add("tip", "Spacing before punctuation", "Some commas/periods have a space before them.");
+
+    // --- AI-sounding language ---
+    if (opts.checkAI !== false) {
+      const ai = detectAILanguage(body + "\n" + (paper.title || ""));
+      if (ai.total >= 1) {
+        const level = ai.total >= 6 ? "warn" : "tip";
+        add(level, ai.total + " AI-sounding phrase(s)/word(s)",
+          "Flagged wording that often reads as AI-generated or inflated. Rewrite on the AI → Human tab.",
+          { terms: ai.items.slice(0, 12) });
+      }
+    }
+
+    const counts = { error: 0, warn: 0, tip: 0 };
+    issues.forEach((i) => counts[i.level]++);
+    let score = 100 - counts.error * 15 - counts.warn * 6 - counts.tip * 1.5;
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    return {
+      score: score,
+      counts: counts,
+      issues: issues,
+      stats: {
+        words: wordsIn(body),
+        sections: paper.sections.length,
+        references: (paper.references || []).length,
+      },
+    };
+  }
+
+  /* =======================================================================
    * UI
    * ===================================================================== */
   function $(id) { return document.getElementById(id); }
@@ -837,6 +1199,278 @@
     download(new Blob([t], { type: "text/plain" }), "humanized.txt");
   });
 
+  // ---- theme toggle ----
+  (function theme() {
+    const root = document.documentElement;
+    const btn = $("theme-toggle");
+    const saved = (function () { try { return localStorage.getItem("pf-theme"); } catch (e) { return null; } })();
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    function apply(mode) {
+      root.setAttribute("data-theme", mode);
+      if (btn) btn.textContent = mode === "dark" ? "☀️" : "🌙";
+    }
+    apply(saved || (prefersDark ? "dark" : "light"));
+    if (btn) btn.addEventListener("click", () => {
+      const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      apply(next);
+      try { localStorage.setItem("pf-theme", next); } catch (e) {}
+    });
+  })();
+
+  // ---- thesis -> article ----
+  let thCustomSections = null;   // section titles learned from an uploaded sample
+
+  function thLevel() {
+    const r = document.querySelector('input[name="thlevel"]:checked');
+    return r ? r.value : "medium";
+  }
+  function thTemplate() {
+    const r = document.querySelector('input[name="thtpl"]:checked');
+    return r ? r.value : "journal";
+  }
+  function thPublisher() {
+    const r = document.querySelector('input[name="thpub"]:checked');
+    return r ? r.value : "ieee";
+  }
+  function thStatus(msg, cls) { const el = $("th-status"); if (el) { el.textContent = msg; el.className = "status " + (cls || ""); } }
+
+  // render template chooser cards
+  (function renderTemplates() {
+    const wrap = $("th-templates");
+    if (!wrap) return;
+    Object.entries(ARTICLE_TEMPLATES).forEach(([key, t], i) => {
+      const id = "tpl-" + key;
+      const label = document.createElement("label");
+      label.className = "tpl-card";
+      label.innerHTML =
+        '<input type="radio" name="thtpl" value="' + key + '" id="' + id + '"' + (i === 0 ? " checked" : "") + ' />' +
+        '<p class="tpl-name">' + htmlEsc(t.name) + '</p>' +
+        '<p class="tpl-desc">' + htmlEsc(t.desc) + '</p>' +
+        '<p class="tpl-secs">' + t.sections.length + ' sections</p>';
+      wrap.appendChild(label);
+    });
+  })();
+
+  // uploaded sample -> learn its structure
+  $("th-format-file") && $("th-format-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    const st = $("th-format-status");
+    if (!file) { thCustomSections = null; if (st) { st.textContent = ""; st.className = "status"; } return; }
+    try {
+      const titles = await readFormatStructure(file);
+      if (!titles.length) {
+        thCustomSections = null;
+        if (st) { st.textContent = "Couldn't find clear section headings in that file — falling back to the chosen template."; st.className = "status warn"; }
+        return;
+      }
+      thCustomSections = titles;
+      if (st) { st.textContent = "Mimicking structure: " + titles.join(" · "); st.className = "status ok"; }
+    } catch (err) {
+      thCustomSections = null;
+      if (st) { st.textContent = "Could not read that file: " + err.message; st.className = "status warn"; }
+    }
+  });
+
+  async function getThesisPaper() {
+    const file = $("th-file").files[0];
+    if (file) return await readFileToPaper(file);
+    const text = $("th-text").value.trim();
+    if (text) { const p = buildPaper(textToBlocks(text, false)); if (!p.title) p.title = "thesis"; return p; }
+    return null;
+  }
+
+  // optionally plain-language the condensed article in place
+  async function maybeHumanizeArticle(article) {
+    if (!$("th-humanize").checked) return;
+    const lvl = "medium";
+    if (THESIS_LLM) {
+      // advanced users can plug in a real model
+      if (article.abstract) article.abstract = await THESIS_LLM(article.abstract, lvl);
+      for (const sec of article.sections)
+        sec.paragraphs = await Promise.all(sec.paragraphs.map((p) => THESIS_LLM(p, lvl)));
+      return;
+    }
+    if (article.abstract) article.abstract = humanizeText(article.abstract, lvl).text;
+    for (const sec of article.sections)
+      sec.paragraphs = sec.paragraphs.map((p) => humanizeText(p, lvl).text);
+  }
+
+  async function buildArticle() {
+    const paper = await getThesisPaper();
+    if (!paper) { thStatus("Upload a thesis file or paste some text first.", "warn"); return null; }
+    const article = thesisToArticle(paper, {
+      template: thTemplate(),
+      customSections: thCustomSections,
+      level: thLevel(),
+      makeAbstract: $("th-abstract").checked,
+    });
+    await maybeHumanizeArticle(article);
+    return article;
+  }
+
+  function renderPreview(article) {
+    const pv = $("th-pv");
+    if (!pv) return;
+    let html = "<h4>" + htmlEsc(article.title) + "</h4>";
+    const meta = [
+      article.authors.length + " author" + (article.authors.length === 1 ? "" : "s"),
+      article.sections.length + " sections",
+      article.references.length + " references",
+    ];
+    html += '<p class="pv-meta">' + meta.join(" · ") + "</p>";
+    if (article.abstract) {
+      html += '<div class="pv-sec"><div class="pv-sec-title">Abstract <span class="pv-words">' +
+        article.abstract.split(/\s+/).filter(Boolean).length + ' words</span></div>' +
+        '<p class="pv-body">' + htmlEsc(article.abstract) + "</p></div>";
+    }
+    article.sections.forEach((s) => {
+      html += '<div class="pv-sec"><div class="pv-sec-title">' + htmlEsc(s.title) +
+        ' <span class="pv-words">' + wordCount(s.paragraphs) + ' words</span></div>' +
+        '<p class="pv-body">' + htmlEsc((s.paragraphs[0] || "").slice(0, 220)) +
+        (s.paragraphs.length ? "…" : "<em>(no content matched)</em>") + "</p></div>";
+    });
+    if (article.warnings.length) {
+      html += '<div class="pv-sec"><div class="pv-sec-title">Review notes</div><p class="pv-body">• ' +
+        article.warnings.map(htmlEsc).join("<br>• ") + "</p></div>";
+    }
+    pv.innerHTML = html;
+  }
+
+  $("th-preview") && $("th-preview").addEventListener("click", async () => {
+    try {
+      thStatus("Reading thesis and building article…");
+      const article = await buildArticle();
+      if (!article) return;
+      renderPreview(article);
+      thStatus("Article built — " + article.sections.length + " sections. Scroll the preview, then download below.", "ok");
+    } catch (e) { thStatus("Error: " + e.message, "warn"); console.error(e); }
+  });
+
+  function thStem(article) {
+    const file = $("th-file").files[0];
+    let stem = file ? file.name.replace(/\.[^.]+$/, "") : (article.title || "article");
+    return (stem.replace(/[^\w.-]+/g, "_").slice(0, 60) || "article") + "_article";
+  }
+
+  $("th-tex") && $("th-tex").addEventListener("click", async () => {
+    try {
+      thStatus("Building LaTeX…");
+      const article = await buildArticle();
+      if (!article) return;
+      renderPreview(article);
+      const tex = renderLatex(article, thPublisher());
+      download(new Blob([tex], { type: "text/x-tex" }), thStem(article) + "_" + thPublisher() + ".tex");
+      thStatus("LaTeX ready.", "ok");
+    } catch (e) { thStatus("Error: " + e.message, "warn"); console.error(e); }
+  });
+
+  $("th-docx") && $("th-docx").addEventListener("click", async () => {
+    try {
+      thStatus("Building Word file…");
+      const article = await buildArticle();
+      if (!article) return;
+      renderPreview(article);
+      const blob = await buildDocx(article, thPublisher());
+      download(blob, thStem(article) + "_" + thPublisher() + ".docx");
+      thStatus("Word file ready.", "ok");
+    } catch (e) { thStatus("Error: " + e.message, "warn"); console.error(e); }
+  });
+
+  $("th-pdf") && $("th-pdf").addEventListener("click", async () => {
+    try {
+      thStatus("Preparing PDF…");
+      const article = await buildArticle();
+      if (!article) return;
+      renderPreview(article);
+      const name = thStem(article) + "_" + thPublisher();
+      const html = renderPdfDoc(article, thPublisher(), name);
+      const w = window.open("", "_blank");
+      if (!w) { thStatus("Pop-up blocked — allow pop-ups for this site to export PDF.", "warn"); return; }
+      w.document.open(); w.document.write(html); w.document.close();
+      thStatus('PDF ready — choose "Save as PDF" in the print dialog.', "ok");
+    } catch (e) { thStatus("Error: " + e.message, "warn"); console.error(e); }
+  });
+
+  // ---- paper check ----
+  function chkPublisher() {
+    const r = document.querySelector('input[name="chkpub"]:checked');
+    return r ? r.value : "ieee";
+  }
+  function chkStatus(msg, cls) { const el = $("chk-status"); if (el) { el.textContent = msg; el.className = "status " + (cls || ""); } }
+
+  async function getChkPaper() {
+    const file = $("chk-file").files[0];
+    if (file) return await readFileToPaper(file);
+    const text = $("chk-text").value.trim();
+    if (text) { const p = buildPaper(textToBlocks(text, false)); if (!p.title) p.title = "paper"; return p; }
+    return null;
+  }
+
+  const ICONS = { error: "!", warn: "!", tip: "i" };
+  const GROUPS = [
+    { level: "error", heading: "Must fix" },
+    { level: "warn", heading: "Should review" },
+    { level: "tip", heading: "Suggestions" },
+  ];
+
+  function renderReport(report) {
+    const card = $("chk-result-card");
+    const el = $("chk-report");
+    let band = report.score >= 80 ? "good" : report.score >= 55 ? "ok" : "bad";
+    let verdict = report.score >= 80 ? "Looking good — minor polish only."
+      : report.score >= 55 ? "Some things to tidy up before submitting."
+      : "Several issues to address before this is submission-ready.";
+
+    let html = '<div class="report-head">' +
+      '<div class="score ' + band + '"><span class="num">' + report.score + '</span><span class="lbl">/ 100</span></div>' +
+      '<div class="report-summary"><h4>' + verdict + '</h4>' +
+      '<p>' + report.stats.words + ' words · ' + report.stats.sections + ' sections · ' +
+      report.stats.references + ' references</p>' +
+      '<div class="tally">' +
+        '<span class="t-err">' + report.counts.error + ' must fix</span>' +
+        '<span class="t-warn">' + report.counts.warn + ' review</span>' +
+        '<span class="t-tip">' + report.counts.tip + ' tips</span>' +
+      '</div></div></div>';
+
+    if (!report.issues.length) {
+      html += '<div class="pass-note">✓ No problems detected. Still proofread before submitting.</div>';
+    } else {
+      for (const g of GROUPS) {
+        const items = report.issues.filter((i) => i.level === g.level);
+        if (!items.length) continue;
+        html += '<div class="chk-group"><h5>' + g.heading + ' (' + items.length + ')</h5>';
+        for (const it of items) {
+          let terms = "";
+          if (it.terms && it.terms.length) {
+            terms = '<div class="ai-terms">' + it.terms.map((t) =>
+              "<code>" + htmlEsc(t.term) + (t.count > 1 ? " ×" + t.count : "") + "</code>").join("") + "</div>";
+          }
+          const cls = g.level === "error" ? "error" : g.level === "warn" ? "warn" : "tip";
+          html += '<div class="issue ' + cls + '"><span class="ico">' + ICONS[g.level] + '</span>' +
+            '<div class="msg"><b>' + htmlEsc(it.title) + '</b><p>' + htmlEsc(it.detail) + '</p>' + terms + '</div></div>';
+        }
+        html += '</div>';
+      }
+    }
+    el.innerHTML = html;
+    card.style.display = "";
+  }
+
+  $("chk-run") && $("chk-run").addEventListener("click", async () => {
+    try {
+      chkStatus("Reading and checking your paper…");
+      const paper = await getChkPaper();
+      if (!paper) { chkStatus("Upload a file or paste your paper first.", "warn"); return; }
+      const report = checkPaper(paper, chkPublisher(), { checkAI: $("chk-ai").checked });
+      renderReport(report);
+      chkStatus("Done — score " + report.score + "/100. See the report below.", "ok");
+      $("chk-result-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) { chkStatus("Error: " + e.message, "warn"); console.error(e); }
+  });
+
   // expose for quick console/testing
-  window.PaperForge = { humanizeText, buildPaper, textToBlocks, renderLatex, optionsForLevel };
+  window.PaperForge = {
+    humanizeText, buildPaper, textToBlocks, renderLatex, optionsForLevel,
+    thesisToArticle, ARTICLE_TEMPLATES, setThesisLLM, checkPaper, detectAILanguage,
+  };
 })();
